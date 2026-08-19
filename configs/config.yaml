@@ -1,0 +1,40 @@
+server:
+  port: 8080
+  read_timeout: 15s
+  write_timeout: 15s
+
+database:
+  host: "postgres"
+  port: 5432
+  user: "sentinel"
+  password: "sentinel_secret_password"
+  dbname: "sentinelscan"
+  sslmode: "disable"
+  max_open_conns: 25
+  max_idle_conns: 10
+
+opensearch:
+  addresses:
+    - "http://opensearch:9200"
+  username: "admin"
+  password: "admin_password_123"
+  index_prefix: "sentinelscan"
+
+redis:
+  address: "redis:6379"
+  password: ""
+  db: 0
+
+scanner:
+  workers: 50
+  timeout: 5s
+  rate_limit_rps: 100
+  max_body_size_bytes: 1048576
+  max_redirects: 5
+
+scope:
+  audit_log_path: "/var/log/sentinelscan/scope_audit.log"
+  strict: true
+
+logging:
+  level: "info"

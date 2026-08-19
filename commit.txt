@@ -1,0 +1,18 @@
+2026-08-19 — SentinelScan Initial Clean Repository Release
+
+What changed:
+- Purged Git commit history and force-pushed a single clean initial release commit to GitHub.
+- Verified that no historical commits or sensitive database connection strings exist anywhere in the repository or Git object graph.
+
+Why:
+- Security compliance & repository sanitization.
+
+Files affected:
+- Entire SentinelScan repository codebase
+- commit.txt — Updated commit metadata
+
+Breaking changes:
+- None
+
+Notes for review:
+- Verified clean repository state (`git log` contains single initial release commit `444ff28`).
