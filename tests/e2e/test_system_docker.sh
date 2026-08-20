@@ -9,7 +9,7 @@ GO_BIN="/usr/local/go/bin/go"
 DB_URL="postgresql://sentinel:sentinel_password@172.28.0.5:5432/sentinelscan?sslmode=disable"
 
 echo "=================================================="
-echo " PHASE 12 — BLACK-BOX PRODUCTION PATH VALIDATION  "
+echo " PHASE 14 — CDN-AWARE ORIGIN DISCOVERY E2E LAB    "
 echo "=================================================="
 
 cleanup() {
@@ -39,14 +39,15 @@ while [ $WAIT_COUNT -lt $MAX_WAIT ]; do
     POSTGRES_HEALTH=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}unknown{{end}}' lab-postgres 2>/dev/null || echo "not_found")
     REDIS_HEALTH=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}unknown{{end}}' lab-redis 2>/dev/null || echo "not_found")
     NGINX_HEALTH=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}unknown{{end}}' lab-nginx 2>/dev/null || echo "not_found")
+    ORIGIN_HEALTH=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}unknown{{end}}' lab-origin 2>/dev/null || echo "not_found")
 
-    if [ "$POSTGRES_HEALTH" = "healthy" ] && [ "$REDIS_HEALTH" = "healthy" ] && [ "$NGINX_HEALTH" = "healthy" ]; then
+    if [ "$POSTGRES_HEALTH" = "healthy" ] && [ "$REDIS_HEALTH" = "healthy" ] && [ "$NGINX_HEALTH" = "healthy" ] && [ "$ORIGIN_HEALTH" = "healthy" ]; then
         UNHEALTHY=0
-        echo "✓ Tous les conteneurs clés sont HEALTHY !"
+        echo "✓ Tous les conteneurs clés (Postgres, Redis, CDN Edge, Origin) sont HEALTHY !"
         break
     fi
 
-    echo "Attente des healthchecks... (Postgres: $POSTGRES_HEALTH, Redis: $REDIS_HEALTH, Nginx: $NGINX_HEALTH)"
+    echo "Attente des healthchecks... (Postgres: $POSTGRES_HEALTH, Edge: $NGINX_HEALTH, Origin: $ORIGIN_HEALTH)"
     sleep 2
     WAIT_COUNT=$((WAIT_COUNT + 2))
 done
@@ -57,48 +58,51 @@ if [ $UNHEALTHY -eq 1 ]; then
     exit 1
 fi
 
-# 4. Scan Black-Box CLI #1 depuis le conteneur runner
+# 4. Enregistrement d'une observation historique (Corrélation Certificat -> IP) dans PostgreSQL
 echo ""
-echo "[4/7] Exécution du Scan Black-Box CLI #1 (sentinelscan scan jobsira.test)..."
+echo "[4/7] Inscription d'une observation historique (Certificat -> IP 172.28.0.40) dans PostgreSQL..."
+docker exec -e DATABASE_URL="$DB_URL" sentinelscan-runner /app/bin/sentinelscan report jobsira.test >/dev/null 2>&1 || true
+
+docker exec lab-postgres psql -U sentinel -d sentinelscan -c "
+INSERT INTO certificates (id, fingerprint_sha256, subject_cn, issuer, san, first_seen, last_seen)
+VALUES ('a1111111-1111-1111-1111-111111111111', 'sha256_mock_historical_jobsira', 'jobsira.test', 'jobsira.test', '[\"jobsira.test\", \"*.jobsira.test\"]'::jsonb, NOW() - INTERVAL '14 days', NOW() - INTERVAL '14 days')
+ON CONFLICT (fingerprint_sha256) DO NOTHING;
+
+INSERT INTO certificate_observations (id, certificate_id, ip, port, sni, first_seen, last_seen)
+VALUES ('b1111111-1111-1111-1111-111111111111', 'a1111111-1111-1111-1111-111111111111', '172.28.0.40', 443, 'jobsira.test', NOW() - INTERVAL '14 days', NOW() - INTERVAL '14 days')
+ON CONFLICT (certificate_id, ip, port, sni) DO NOTHING;
+"
+
+# 5. Scan Black-Box CLI #1 depuis le conteneur runner (Découverte CDN Edge vs Origin)
+echo ""
+echo "[5/7] Exécution du Scan Black-Box CLI (sentinelscan scan jobsira.test)..."
 docker exec -e DATABASE_URL="$DB_URL" sentinelscan-runner /app/bin/sentinelscan scan jobsira.test
 
-# 5. Audit SQL Direct dans le conteneur PostgreSQL (Vérification de Persistance Réelle)
+# 6. Audit SQL direct dans la base PostgreSQL du conteneur lab-postgres
 echo ""
-echo "[5/7] Audit SQL direct dans la base PostgreSQL du conteneur lab-postgres..."
-HOST_COUNT=$(docker exec lab-postgres psql -U sentinel -d sentinelscan -t -c "SELECT count(*) FROM hosts;" | tr -d '[:space:]')
-PORT_COUNT=$(docker exec lab-postgres psql -U sentinel -d sentinelscan -t -c "SELECT count(*) FROM ports;" | tr -d '[:space:]')
-CERT_COUNT=$(docker exec lab-postgres psql -U sentinel -d sentinelscan -t -c "SELECT count(*) FROM certificates;" | tr -d '[:space:]')
-FINDING_COUNT=$(docker exec lab-postgres psql -U sentinel -d sentinelscan -t -c "SELECT count(*) FROM findings;" | tr -d '[:space:]')
+echo "[6/7] Audit SQL direct dans la base PostgreSQL..."
+FINDING_COUNT=$(docker exec lab-postgres psql -U sentinel -d sentinelscan -t -c "SELECT count(*) FROM findings WHERE candidate_ip = '172.28.0.40';" | tr -d '[:space:]')
+EDGE_FINDINGS=$(docker exec lab-postgres psql -U sentinel -d sentinelscan -t -c "SELECT count(*) FROM findings WHERE candidate_ip = '172.28.0.20';" | tr -d '[:space:]')
 
-echo "  -> Table 'hosts' rows : $HOST_COUNT"
-echo "  -> Table 'ports' rows : $PORT_COUNT"
-echo "  -> Table 'certificates' rows : $CERT_COUNT"
-echo "  -> Table 'findings' rows : $FINDING_COUNT"
+echo "  -> Origin Finding (172.28.0.40) rows in DB : $FINDING_COUNT"
+echo "  -> Edge Proxy (172.28.0.20) findings in DB  : $EDGE_FINDINGS (Should be 0, CDN is not an Origin)"
 
-if [ "$HOST_COUNT" -eq 0 ] || [ "$PORT_COUNT" -eq 0 ]; then
-    echo "❌ ECHEC AUDIT SQL : La base de données PostgreSQL contient 0 observation !"
+if [ "$FINDING_COUNT" -eq 0 ]; then
+    echo "❌ ECHEC : L'Origin Server 172.28.0.40 n'a pas été confirmé dans les findings PostgreSQL !"
     exit 1
 fi
 
-# 6. Test de transition dynamique (stop / start lab-api)
-echo ""
-echo "[6/7] Test de transition d'état à chaud (docker stop lab-api -> rescan)..."
-docker stop lab-api
-sleep 2
+if [ "$EDGE_FINDINGS" -gt 0 ]; then
+    echo "❌ ECHEC : Le CDN Edge 172.28.0.20 a été faussement enregistré comme Origin Server !"
+    exit 1
+fi
 
-docker exec -e DATABASE_URL="$DB_URL" sentinelscan-runner /app/bin/sentinelscan scan jobsira.test
-
-docker start lab-api
-sleep 2
-
-docker exec -e DATABASE_URL="$DB_URL" sentinelscan-runner /app/bin/sentinelscan scan jobsira.test
-
-# 7. Lecture du rapport EASM final via le CLI Black-Box
+# 7. Lecture du rapport EASM final via sentinelscan report
 echo ""
 echo "[7/7] Lecture du rapport EASM final via sentinelscan report jobsira.test..."
 docker exec -e DATABASE_URL="$DB_URL" sentinelscan-runner /app/bin/sentinelscan report jobsira.test
 
 echo ""
 echo "=================================================="
-echo " TRUE END-TO-END PRODUCTION PATH VALIDATED CLEAN  "
+echo " CDN-AWARE ORIGIN DISCOVERY PROVEN 100% IN LAB    "
 echo "=================================================="

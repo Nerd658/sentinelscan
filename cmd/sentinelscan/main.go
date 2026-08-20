@@ -12,6 +12,7 @@ import (
 	"sentinelscan/internal/dns"
 	"sentinelscan/internal/fingerprint"
 	"sentinelscan/internal/http"
+	"sentinelscan/internal/origin"
 	"sentinelscan/internal/scope"
 	"sentinelscan/internal/scoring"
 	"sentinelscan/internal/search"
@@ -112,7 +113,6 @@ func executeLiveScan(target string, cfg *config.Config) {
 	fpEngine := fingerprint.NewEngine()
 	corrEngine := correlation.NewEngine()
 	_ = corrEngine
-	evaluator := scoring.NewEvaluator()
 
 	fmt.Println("==================================================")
 	fmt.Println("              SENTINELSCAN EASM ENGINE            ")
@@ -222,34 +222,72 @@ func executeLiveScan(target string, cfg *config.Config) {
 		}
 	}
 
-	// 5. Origin Exposure Scoring & Correlation
-	fmt.Println("\n5. EASM ORIGIN EXPOSURE EVALUATION")
+	// 5. CDN / Edge Proxy Detection & Origin Discovery
+	fmt.Println("\n5. CDN / REVERSE PROXY DETECTION & ORIGIN ATTRIBUTION")
 	fmt.Println("--------------------------------------------------")
-	for _, ip := range discoveredIPs {
-		var tObs *tls.TLSObservation
-		var hObs *http.HTTPObservation
-		if len(tlsObservations) > 0 {
-			tObs = tlsObservations[0]
-		}
-		if len(httpObservations) > 0 {
-			hObs = httpObservations[0]
-		}
 
-		res := evaluator.Evaluate(target, ip, tObs, hObs, true)
-		fmt.Printf("Candidate IP: %s\n", res.CandidateIP)
-		fmt.Printf("Score: %d / 100\n", res.Score)
-		fmt.Printf("Confidence Rating: %s\n", res.Confidence)
-		fmt.Println("Evidence List:")
-		for _, ev := range res.Evidence {
-			fmt.Printf("  ✓ %s\n", ev)
+	db, _ := storage.NewPostgresDB(cfg.Database)
+	var historicalIPs []string
+	if db != nil {
+		historicalIPs, _ = db.GetHistoricalIPsForDomain(ctx, target)
+		for _, hIP := range historicalIPs {
+			scopeEngine.AddAllowedIP(hIP)
 		}
 	}
 
+	originEngine := origin.NewEngine()
+	verdict := originEngine.EvaluateTarget(
+		ctx,
+		target,
+		discoveredIPs,
+		historicalIPs,
+		tcpScanner,
+		httpFetcher,
+		tlsInspector,
+	)
+
+	if verdict.EdgeDetected {
+		fmt.Printf("Edge / CDN Detected: YES (Provider: %s)\n", verdict.EdgeProvider)
+		fmt.Printf("Edge Nodes (Proxied): %v\n", verdict.EdgeIPs)
+	} else {
+		fmt.Println("Edge / CDN Detected: NO (Direct Infrastructure)")
+	}
+
+	fmt.Println("\n6. ORIGIN CANDIDATE VERIFICATION")
+	fmt.Println("--------------------------------------------------")
+	if len(verdict.Candidates) == 0 {
+		fmt.Println("No external origin candidates discovered.")
+	} else {
+		for _, c := range verdict.Candidates {
+			fmt.Printf("Candidate IP: %s\n", c.IP)
+			fmt.Printf("  Role:       %s\n", c.Role)
+			fmt.Printf("  Source:     %s\n", c.Source)
+			fmt.Printf("  Score:      %d / 100\n", c.Score)
+			fmt.Printf("  Confidence: %s\n", c.Confidence)
+			fmt.Printf("  Status:     %s\n", c.Status)
+			fmt.Println("  Evidence:")
+			for _, ev := range c.Evidence {
+				fmt.Printf("    ✓ %s\n", ev)
+			}
+		}
+	}
+
+	fmt.Println("\n7. FINAL ORIGIN EXPOSURE VERDICT")
+	fmt.Println("--------------------------------------------------")
+	if verdict.Status == "CONFIRMED" {
+		fmt.Printf("Origin Exposure: CONFIRMED\n")
+		fmt.Printf("Origin Server IP: %s\n", verdict.ConfirmedOrigin)
+		fmt.Printf("Confidence:       %s\n", verdict.Confidence)
+	} else if verdict.EdgeDetected {
+		fmt.Printf("Origin Exposure: NOT DISCOVERED (Protected behind %s)\n", verdict.EdgeProvider)
+		fmt.Printf("Confidence:       LOW\n")
+	} else {
+		fmt.Printf("Origin Exposure: UNCONFIRMED\n")
+	}
 	fmt.Println("==================================================")
 
 	// Save to DB if DB is configured and active
-	db, dbErr := storage.NewPostgresDB(cfg.Database)
-	if dbErr == nil {
+	if db != nil {
 		defer db.Close()
 		for _, ip := range discoveredIPs {
 			_ = db.SaveHost(ctx, ip, "", "", "", "")
@@ -265,17 +303,15 @@ func executeLiveScan(target string, cfg *config.Config) {
 			_ = db.SaveCertificate(ctx, t)
 			_ = db.SaveStateEvent(ctx, target, "CERT_INSPECTED", fmt.Sprintf("CN=%s SAN=%v", t.SubjectCN, t.SAN))
 		}
-		for _, ip := range discoveredIPs {
-			var tObs *tls.TLSObservation
-			var hObs *http.HTTPObservation
-			if len(tlsObservations) > 0 {
-				tObs = tlsObservations[0]
-			}
-			if len(httpObservations) > 0 {
-				hObs = httpObservations[0]
-			}
-			res := evaluator.Evaluate(target, ip, tObs, hObs, true)
-			_ = db.SaveFinding(ctx, res)
+
+		if verdict.Status == "CONFIRMED" && verdict.ConfirmedOrigin != "" {
+			_ = db.SaveFinding(ctx, scoring.OriginCandidateResult{
+				CandidateIP: verdict.ConfirmedOrigin,
+				Domain:      target,
+				Score:       90,
+				Confidence:  scoring.ConfidenceVeryHigh,
+				Evidence:    []string{"origin_candidate_verified", "certificate_match", "backend_fingerprint_match"},
+			})
 		}
 
 		// Index into OpenSearch if available

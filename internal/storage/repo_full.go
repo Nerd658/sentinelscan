@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -216,4 +217,40 @@ func (p *PostgresDB) GetRecentFindings(ctx context.Context) ([]FindingRecord, er
 		}
 	}
 	return findings, nil
+}
+
+func (p *PostgresDB) GetHistoricalIPsForDomain(ctx context.Context, domain string) ([]string, error) {
+	cleaned := strings.ToLower(strings.TrimSpace(domain))
+	rows, err := p.DB.QueryContext(ctx, `
+		SELECT DISTINCT co.ip
+		FROM certificate_observations co
+		JOIN certificates c ON co.certificate_id = c.id
+		WHERE LOWER(c.subject_cn) = $1
+		   OR c.san @> to_jsonb($1::text)
+		   OR to_jsonb(c.san)::text ILIKE '%' || $1 || '%'
+		LIMIT 50
+	`, cleaned)
+	if err != nil {
+		// Fallback query if JSONB operators behave differently
+		rows, err = p.DB.QueryContext(ctx, `
+			SELECT DISTINCT co.ip
+			FROM certificate_observations co
+			JOIN certificates c ON co.certificate_id = c.id
+			WHERE LOWER(c.subject_cn) = $1
+			LIMIT 50
+		`, cleaned)
+		if err != nil {
+			return nil, fmt.Errorf("failed querying historical IPs for domain %s: %w", domain, err)
+		}
+	}
+	defer rows.Close()
+
+	var ips []string
+	for rows.Next() {
+		var ip string
+		if err := rows.Scan(&ip); err == nil && ip != "" {
+			ips = append(ips, ip)
+		}
+	}
+	return ips, nil
 }

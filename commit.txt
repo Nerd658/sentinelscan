@@ -1,18 +1,31 @@
-2026-08-20 — Dynamic Target Authorization in Scope Engine for Online Scans
+2026-08-20 — SentinelScan Phase 14 CDN-Aware Origin Discovery & Attribution Engine
 
 What changed:
-- Added `AddAllowedIP(ipStr string)` in `internal/scope/scope.go` to support dynamic runtime authorization.
-- Updated `cmd/sentinelscan/main.go` to:
-  - Parse direct IP targets and register them in ScopeRules.
-  - Dynamically authorize all IPs discovered via DNS resolution of an authorized target domain.
-- Verified compilation and test suite passing (`go test ./...`).
+- Implemented Node Classifier in `internal/origin/classifier.go`:
+  - Classifies nodes as `EDGE_PROXY` vs `ORIGIN_CANDIDATE` vs `DIRECT_HOST` based on known CDN CIDRs (Cloudflare, etc.), HTTP headers (`CF-Ray`, `Server: cloudflare`, `X-Amz-Cf-Id`, `X-CDN-Edge`), and TLS certificate issuers.
+- Implemented Origin Discovery & Attribution Engine in `internal/origin/engine.go`:
+  - Identifies Edge proxy IPs and excludes them from false-positive origin scoring.
+  - Proactively discovers origin candidates via PostgreSQL historical certificate-to-IP associations (`GetHistoricalIPsForDomain`), Certificate Transparency hostnames, and DNS.
+  - Verifies candidate IPs with active TCP, TLS SNI, and HTTP Host header probes.
+  - Computes origin exposure verdicts (`CONFIRMED`, `UNCONFIRMED`, `NOT_DISCOVERED`).
+- Added database method `GetHistoricalIPsForDomain` in `internal/storage/repo_full.go`.
+- Added unit tests in `internal/origin/origin_test.go`.
+- Integrated full CDN-aware origin pipeline into `cmd/sentinelscan/main.go`.
+- Updated `tests/e2e/test_system_docker.sh`, `tests/e2e/nginx.conf`, and `tests/e2e/origin_nginx.conf` for multi-container Docker lab E2E validation.
 
 Why:
-- Enables SentinelScan to scan real online targets (e.g. preproduction / staging websites) while strictly preventing scans against out-of-scope third-party assets.
+- Resolves the CDN edge proxy false-positive issue where Cloudflare edge IPs were wrongly scored as origin servers.
+- Proves end-to-end in Docker lab that SentinelScan correctly classifies CDN edge nodes (`172.28.0.20` as `EDGE_PROXY`) while discovering and verifying true origin servers (`172.28.0.40` as `CONFIRMED_ORIGIN`).
 
 Files affected:
-- internal/scope/scope.go — Added AddAllowedIP method
-- cmd/sentinelscan/main.go — Dynamic scope enrollment for resolved target IPs
+- internal/origin/classifier.go — Node classification logic for CDN edge proxies
+- internal/origin/engine.go — Candidate discovery, active verification, and verdict computation
+- internal/origin/origin_test.go — Unit tests for CDN classification and candidate scoring
+- internal/storage/repo_full.go — Added GetHistoricalIPsForDomain
+- cmd/sentinelscan/main.go — Integrated CDN-aware origin discovery into executeLiveScan
+- tests/e2e/nginx.conf — Added CDN/Edge response headers
+- tests/e2e/origin_nginx.conf — Updated origin virtual hosting rules
+- tests/e2e/test_system_docker.sh — Added E2E verification of CDN Edge vs Verified Origin
 - commit.txt — Updated commit metadata
 
 Breaking changes:
