@@ -26,7 +26,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	cfg := config.DefaultConfig()
+	cfg, err := config.Load("")
+	if err != nil {
+		cfg = config.DefaultConfig()
+	}
 
 	command := os.Args[1]
 
@@ -87,7 +90,7 @@ func executeLiveScan(target string, cfg *config.Config) {
 
 	scopeEngine, err := scope.NewEngine(scope.ScopeRules{
 		Domains: []string{target, "*." + target},
-		CIDRs:   []string{"172.20.0.0/16"},
+		CIDRs:   []string{"172.20.0.0/16", "172.28.0.0/16"},
 		IPs:     []string{"127.0.0.1"},
 	})
 	if err != nil {

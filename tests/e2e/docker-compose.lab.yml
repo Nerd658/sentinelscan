@@ -8,56 +8,51 @@ services:
       POSTGRES_DB: sentinelscan
       POSTGRES_USER: sentinel
       POSTGRES_PASSWORD: sentinel_password
-    ports:
-      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel -d sentinelscan"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
     networks:
       sentinel-lab:
-        ipv4_address: 172.20.0.5
+        ipv4_address: 172.28.0.5
 
   redis:
     image: redis:7-alpine
     container_name: lab-redis
-    ports:
-      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
     networks:
       sentinel-lab:
-        ipv4_address: 172.20.0.6
-
-  opensearch:
-    image: opensearchproject/opensearch:2.11.0
-    container_name: lab-opensearch
-    environment:
-      - cluster.name=sentinel-cluster
-      - node.name=sentinel-node1
-      - discovery.type=single-node
-      - bootstrap.memory_lock=true
-      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
-      - DISABLE_SECURITY_PLUGIN=true
-    ports:
-      - "9200:9200"
-    networks:
-      sentinel-lab:
-        ipv4_address: 172.20.0.7
+        ipv4_address: 172.28.0.6
 
   lab-dns:
     image: coredns/coredns:latest
     container_name: lab-dns
     volumes:
-      - ./Corefile:/Corefile:ro
+      - ./Corefile:/Corefile
     command: -conf /Corefile
     networks:
       sentinel-lab:
-        ipv4_address: 172.20.0.53
+        ipv4_address: 172.28.0.53
 
   lab-nginx:
     image: nginx:alpine
     container_name: lab-nginx
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx.conf:/etc/nginx/nginx.conf
       - ./certs:/etc/nginx/certs:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:80/ || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
     networks:
       sentinel-lab:
-        ipv4_address: 172.20.0.20
+        ipv4_address: 172.28.0.20
         aliases:
           - jobsira.test
           - www.jobsira.test
@@ -68,24 +63,29 @@ services:
     container_name: lab-apache
     networks:
       sentinel-lab:
-        ipv4_address: 172.20.0.21
+        ipv4_address: 172.28.0.21
 
   lab-caddy:
     image: caddy:alpine
     container_name: lab-caddy
     networks:
       sentinel-lab:
-        ipv4_address: 172.20.0.22
+        ipv4_address: 172.28.0.22
 
   lab-api:
     image: nginx:alpine
     container_name: lab-api
     volumes:
-      - ./api_nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./api_nginx.conf:/etc/nginx/nginx.conf
       - ./certs:/etc/nginx/certs:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:80/ || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
     networks:
       sentinel-lab:
-        ipv4_address: 172.20.0.30
+        ipv4_address: 172.28.0.30
         aliases:
           - api.jobsira.test
 
@@ -93,25 +93,43 @@ services:
     image: nginx:alpine
     container_name: lab-origin
     volumes:
-      - ./origin_nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./origin_nginx.conf:/etc/nginx/nginx.conf
       - ./certs:/etc/nginx/certs:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-check-certificate --spider -q https://127.0.0.1:443/ || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
     networks:
       sentinel-lab:
-        ipv4_address: 172.20.0.40
+        ipv4_address: 172.28.0.40
         aliases:
           - origin.jobsira.test
 
-  lab-cdn:
-    image: nginx:alpine
-    container_name: lab-cdn
-    volumes:
-      - ./cdn_nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./certs:/etc/nginx/certs:ro
+  sentinelscan-runner:
+    build:
+      context: ../..
+      dockerfile: tests/e2e/Dockerfile.runner
+    container_name: sentinelscan-runner
+    environment:
+      DATABASE_URL: postgresql://sentinel:sentinel_password@172.28.0.5:5432/sentinelscan?sslmode=disable
+      REDIS_URL: redis://172.28.0.6:6379/0
+    dns:
+      - 172.28.0.53
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      lab-nginx:
+        condition: service_healthy
+      lab-api:
+        condition: service_healthy
+      lab-origin:
+        condition: service_healthy
     networks:
       sentinel-lab:
-        ipv4_address: 172.20.0.10
-        aliases:
-          - cdn.jobsira.test
+        ipv4_address: 172.28.0.100
 
 networks:
   sentinel-lab:
@@ -119,4 +137,4 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.20.0.0/16
+        - subnet: 172.28.0.0/16

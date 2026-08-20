@@ -33,11 +33,29 @@ func NewPostgresDB(cfg config.DatabaseConfig) (*PostgresDB, error) {
 	}
 
 	logger.Info("Connected to PostgreSQL database", "dbname", cfg.DBName, "host", cfg.Host)
-	return &PostgresDB{DB: db}, nil
+	postgresDB := &PostgresDB{DB: db}
+	_ = postgresDB.InitSchema(ctx)
+	return postgresDB, nil
 }
 
 func (p *PostgresDB) InitSchema(ctx context.Context) error {
 	schemaSQL := `
+	CREATE TABLE IF NOT EXISTS targets (
+		id UUID PRIMARY KEY,
+		name VARCHAR(255) NOT NULL,
+		description TEXT,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
+
+	CREATE TABLE IF NOT EXISTS target_scopes (
+		id UUID PRIMARY KEY,
+		target_id UUID NOT NULL REFERENCES targets(id) ON DELETE CASCADE,
+		scope_type VARCHAR(50) NOT NULL,
+		value VARCHAR(255) NOT NULL,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
+
 	CREATE TABLE IF NOT EXISTS hosts (
 		id UUID PRIMARY KEY,
 		ip VARCHAR(45) UNIQUE NOT NULL,
@@ -101,6 +119,64 @@ func (p *PostgresDB) InitSchema(ctx context.Context) error {
 		first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		UNIQUE(certificate_id, ip, port, sni)
+	);
+
+	CREATE TABLE IF NOT EXISTS services (
+		id UUID PRIMARY KEY,
+		port_id UUID NOT NULL REFERENCES ports(id) ON DELETE CASCADE,
+		name VARCHAR(100) NOT NULL,
+		banner TEXT,
+		version VARCHAR(100),
+		first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
+
+	CREATE TABLE IF NOT EXISTS technologies (
+		id UUID PRIMARY KEY,
+		name VARCHAR(100) UNIQUE NOT NULL,
+		category VARCHAR(100),
+		description TEXT
+	);
+
+	CREATE TABLE IF NOT EXISTS technology_observations (
+		id UUID PRIMARY KEY,
+		technology_id UUID NOT NULL REFERENCES technologies(id) ON DELETE CASCADE,
+		target_type VARCHAR(50) NOT NULL,
+		target_identifier VARCHAR(255) NOT NULL,
+		confidence INT NOT NULL DEFAULT 100,
+		evidence JSONB,
+		first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
+
+	CREATE TABLE IF NOT EXISTS dns_records (
+		id UUID PRIMARY KEY,
+		domain VARCHAR(255) NOT NULL,
+		record_type VARCHAR(20) NOT NULL,
+		value TEXT NOT NULL,
+		ttl INT,
+		first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
+
+	CREATE TABLE IF NOT EXISTS scan_jobs (
+		id UUID PRIMARY KEY,
+		target_id UUID REFERENCES targets(id) ON DELETE SET NULL,
+		scan_type VARCHAR(50) NOT NULL,
+		status VARCHAR(50) NOT NULL DEFAULT 'pending',
+		config JSONB,
+		error_message TEXT,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		started_at TIMESTAMPTZ,
+		finished_at TIMESTAMPTZ
+	);
+
+	CREATE TABLE IF NOT EXISTS scan_observations (
+		id UUID PRIMARY KEY,
+		scan_job_id UUID NOT NULL REFERENCES scan_jobs(id) ON DELETE CASCADE,
+		observation_type VARCHAR(50) NOT NULL,
+		details JSONB NOT NULL,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	);
 
 	CREATE TABLE IF NOT EXISTS correlations (

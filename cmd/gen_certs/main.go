@@ -41,7 +41,7 @@ func createCert(outDir, name string, sans []string) {
 			Organization: []string{"SentinelScan Lab CA"},
 		},
 		DNSNames:              sans,
-		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("172.20.0.20"), net.ParseIP("172.20.0.40")},
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("172.20.0.20"), net.ParseIP("172.20.0.40"), net.ParseIP("172.28.0.20"), net.ParseIP("172.28.0.40")},
 		NotBefore:             time.Now().Add(-1 * time.Hour),
 		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,

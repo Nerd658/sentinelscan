@@ -1,27 +1,33 @@
-2026-08-20 — SentinelScan Phase 10 True Docker E2E System Test Orchestration
+2026-08-20 — SentinelScan Phase 11 Dynamic Reality Test & Runner Container Architecture
 
 What changed:
-- Created live Docker orchestration script (`tests/e2e/test_system_docker.sh`):
-  - Automatically spins up Docker Compose lab (`docker compose -f tests/e2e/docker-compose.lab.yml up -d --build`).
-  - Waits for `postgres`, `redis`, `opensearch`, `lab-dns`, `lab-nginx`, `lab-apache`, `lab-caddy`, `lab-api`, `lab-origin`, `lab-cdn` services to be healthy.
-  - Builds SentinelScan CLI binary and executes live scan & report commands against live container ports.
-  - Automatically tears down Docker lab environment on exit (`docker compose down -v`).
-- Added `InitSchema(ctx)` method in `internal/storage/postgres.go` to automatically apply DDL table schema on startup.
-- Bound `make test-e2e-docker` target in `Makefile` to execute `bash tests/e2e/test_system_docker.sh`.
-- Updated `commit.txt` and verified clean compilation and test execution across all packages.
+- Implemented `sentinelscan-runner` container in `tests/e2e/docker-compose.lab.yml`:
+  - Attached runner container directly to `sentinel-lab` bridge network (`172.28.0.100`).
+  - Configured `172.28.0.53` (CoreDNS) as primary DNS resolver for native hostname resolution (`*.jobsira.test`).
+- Added active container `healthcheck` definitions for `postgres`, `redis`, `lab-nginx`, `lab-api`, `lab-origin` with explicit polling verification loop in `tests/e2e/test_system_docker.sh`.
+- Replaced `sleep 5` in test orchestration script with strict healthcheck polling loop.
+- Added auto-schema initialization (`InitSchema`) inside `NewPostgresDB` in `internal/storage/postgres.go` for all PostgreSQL tables (`targets`, `target_scopes`, `hosts`, `ports`, `http_observations`, `certificates`, `certificate_observations`, `services`, `technologies`, `technology_observations`, `dns_records`, `scan_jobs`, `scan_observations`, `correlations`, `findings`).
+- Executed live dynamic reality state change tests:
+  - Test 1: Service shutdown (`lab-api` stopped) -> verified port state changes.
+  - Test 2: Service restart (`lab-api` started) -> verified port state re-opened.
+  - Test 3: PostgreSQL database persistence & CLI report query (`sentinelscan report`).
 
 Why:
-- Delivers Phase 10 requirement: a complete, single-command system test pipeline (`make test-e2e-docker`) that orchestrates Docker containers, executes live network scans, persists findings to PostgreSQL, and outputs dynamic EASM reports.
+- Delivers Phase 11 requirement, proving that SentinelScan operates inside an isolated container network, dynamically discovers services via CoreDNS, observes dynamic infrastructure state changes in real time, and generates EASM reports from live PostgreSQL storage.
 
 Files affected:
-- tests/e2e/test_system_docker.sh — Automated Docker lab orchestration script
-- internal/storage/postgres.go — Added InitSchema DDL table migration method
-- Makefile — Bound test-e2e-docker target to test_system_docker.sh
+- tests/e2e/docker-compose.lab.yml — Configured container healthchecks & sentinelscan-runner container
+- tests/e2e/Dockerfile.runner — Built container image for sentinelscan-runner
+- tests/e2e/test_system_docker.sh — Phase 11 dynamic reality orchestration script
+- internal/storage/postgres.go — Added auto-schema DDL initialization
+- cmd/sentinelscan/main.go — Updated config loading to parse DATABASE_URL
+- cmd/gen_certs/main.go — Added 172.28.0.x IPs to X.509 cert SANs
 - commit.txt — Updated commit metadata
 
 Breaking changes:
 - None
 
 Notes for review:
-- All unit, integration, and socket E2E tests pass cleanly (`go test ./...`).
-- Binaries compile successfully (`go build ./cmd/api ./cmd/scanner ./cmd/sentinelscan ./cmd/gen_certs`).
+- Full test suite passes cleanly (`go test ./...`).
+- All binaries compile (`go build ./cmd/api ./cmd/scanner ./cmd/sentinelscan ./cmd/gen_certs`).
+- `make test-e2e-docker` executes complete multi-container pipeline end-to-end.
