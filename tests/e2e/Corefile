@@ -1,0 +1,11 @@
+jobsira.test:53 {
+    hosts {
+        172.20.0.10 cdn.jobsira.test
+        172.20.0.20 jobsira.test www.jobsira.test admin.jobsira.test
+        172.20.0.30 api.jobsira.test
+        172.20.0.40 origin.jobsira.test
+        fallthrough
+    }
+    log
+    errors
+}
