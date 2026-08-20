@@ -19,7 +19,7 @@ test-e2e:
 
 test-e2e-docker:
 	@echo "Running True Docker E2E System Test Suite..."
-	$(GO) test -v ./tests/e2e/...
+	bash tests/e2e/test_system_docker.sh
 
 clean:
 	@echo "Cleaning build artifacts..."

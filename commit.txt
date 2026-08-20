@@ -1,26 +1,27 @@
-2026-08-20 — SentinelScan Phase 9 True Docker E2E System Test Suite
+2026-08-20 — SentinelScan Phase 10 True Docker E2E System Test Orchestration
 
 What changed:
-- Implemented `TestTrueDockerE2ESystemChain` in `tests/e2e/true_docker_e2e_test.go`:
-  - Enforces zero manual observation struct instantiation rule (all observations created dynamically by executing TCP, TLS, and HTTP probes against live network sockets).
-  - Verifies dynamic TLS handshake, X.509 certificate extraction, HTTP 301 Location header parsing, technology fingerprinting, and origin exposure scoring pipeline.
-- Implemented `TestAntiHardcodingDynamicServerHeaderChange` to verify that server header changes dynamically propagate to fingerprinting without code modification.
-- Fixed API host header assertion bug in `tests/e2e/docker_e2e_test.go`.
-- Added `lab-up`, `lab-down`, and `test-e2e-docker` Makefile targets.
-- Verified clean build and test execution across all packages (`go test ./...`).
+- Created live Docker orchestration script (`tests/e2e/test_system_docker.sh`):
+  - Automatically spins up Docker Compose lab (`docker compose -f tests/e2e/docker-compose.lab.yml up -d --build`).
+  - Waits for `postgres`, `redis`, `opensearch`, `lab-dns`, `lab-nginx`, `lab-apache`, `lab-caddy`, `lab-api`, `lab-origin`, `lab-cdn` services to be healthy.
+  - Builds SentinelScan CLI binary and executes live scan & report commands against live container ports.
+  - Automatically tears down Docker lab environment on exit (`docker compose down -v`).
+- Added `InitSchema(ctx)` method in `internal/storage/postgres.go` to automatically apply DDL table schema on startup.
+- Bound `make test-e2e-docker` target in `Makefile` to execute `bash tests/e2e/test_system_docker.sh`.
+- Updated `commit.txt` and verified clean compilation and test execution across all packages.
 
 Why:
-- Fulfills Phase 9 requirement, validating that SentinelScan processes network observations dynamically from actual sockets without relying on hardcoded or manually constructed observation structs.
+- Delivers Phase 10 requirement: a complete, single-command system test pipeline (`make test-e2e-docker`) that orchestrates Docker containers, executes live network scans, persists findings to PostgreSQL, and outputs dynamic EASM reports.
 
 Files affected:
-- tests/e2e/true_docker_e2e_test.go — True Docker E2E system test file
-- tests/e2e/docker_e2e_test.go — Fixed API host assertion test
-- Makefile — Added lab-up, lab-down, test-e2e-docker targets
+- tests/e2e/test_system_docker.sh — Automated Docker lab orchestration script
+- internal/storage/postgres.go — Added InitSchema DDL table migration method
+- Makefile — Bound test-e2e-docker target to test_system_docker.sh
 - commit.txt — Updated commit metadata
 
 Breaking changes:
 - None
 
 Notes for review:
-- All unit, integration, and E2E tests pass cleanly (`go test ./...`).
+- All unit, integration, and socket E2E tests pass cleanly (`go test ./...`).
 - Binaries compile successfully (`go build ./cmd/api ./cmd/scanner ./cmd/sentinelscan ./cmd/gen_certs`).
