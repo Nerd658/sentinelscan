@@ -98,6 +98,16 @@ func (e *Engine) IsKillSwitchActive() bool {
 	return atomic.LoadUint32(&e.killSwitch) == 1
 }
 
+func (e *Engine) AddAllowedIP(ipStr string) {
+	ip := net.ParseIP(strings.TrimSpace(ipStr))
+	if ip == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.allowedIPs[ip.String()] = true
+}
+
 func (e *Engine) IsAllowedIP(ip net.IP) bool {
 	if e.IsKillSwitchActive() {
 		e.logAudit(ip.String(), "ip", false, "kill switch active")

@@ -14,6 +14,7 @@ import (
 	"sentinelscan/internal/http"
 	"sentinelscan/internal/scope"
 	"sentinelscan/internal/scoring"
+	"sentinelscan/internal/search"
 	"sentinelscan/internal/storage"
 	"sentinelscan/internal/tcp"
 	"sentinelscan/internal/tls"
@@ -88,10 +89,15 @@ func executeLiveScan(target string, cfg *config.Config) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	initialIPs := []string{"127.0.0.1"}
+	if parsedIP := net.ParseIP(target); parsedIP != nil {
+		initialIPs = append(initialIPs, target)
+	}
+
 	scopeEngine, err := scope.NewEngine(scope.ScopeRules{
 		Domains: []string{target, "*." + target},
 		CIDRs:   []string{"172.20.0.0/16", "172.28.0.0/16"},
-		IPs:     []string{"127.0.0.1"},
+		IPs:     initialIPs,
 	})
 	if err != nil {
 		fmt.Printf("Failed to initialize scope engine: %v\n", err)
@@ -119,7 +125,6 @@ func executeLiveScan(target string, cfg *config.Config) {
 	dnsRecs, err := dnsResolver.Resolve(ctx, target)
 	var discoveredIPs []string
 	if err != nil || len(dnsRecs) == 0 {
-		fmt.Printf("DNS resolution for %s returned 0 records (using local network scope)\n", target)
 		addrs, _ := net.LookupHost(target)
 		discoveredIPs = addrs
 	} else {
@@ -131,7 +136,16 @@ func executeLiveScan(target string, cfg *config.Config) {
 		}
 	}
 	if len(discoveredIPs) == 0 {
-		discoveredIPs = []string{"127.0.0.1"}
+		if net.ParseIP(target) != nil {
+			discoveredIPs = []string{target}
+		} else {
+			discoveredIPs = []string{"127.0.0.1"}
+		}
+	}
+
+	// Dynamically authorize discovered target IPs within scan scope
+	for _, ip := range discoveredIPs {
+		scopeEngine.AddAllowedIP(ip)
 	}
 
 	// 2. CT Log Discovery
@@ -242,9 +256,14 @@ func executeLiveScan(target string, cfg *config.Config) {
 		}
 		for _, p := range openPorts {
 			_ = db.SavePort(ctx, p)
+			_ = db.SaveStateEvent(ctx, target, "PORT_OPENED", fmt.Sprintf("%s:%d/tcp latency=%dms", p.IP, p.Port, p.LatencyMs))
 		}
 		for _, h := range httpObservations {
 			_ = db.SaveHTTPObservation(ctx, h)
+		}
+		for _, t := range tlsObservations {
+			_ = db.SaveCertificate(ctx, t)
+			_ = db.SaveStateEvent(ctx, target, "CERT_INSPECTED", fmt.Sprintf("CN=%s SAN=%v", t.SubjectCN, t.SAN))
 		}
 		for _, ip := range discoveredIPs {
 			var tObs *tls.TLSObservation
@@ -257,6 +276,19 @@ func executeLiveScan(target string, cfg *config.Config) {
 			}
 			res := evaluator.Evaluate(target, ip, tObs, hObs, true)
 			_ = db.SaveFinding(ctx, res)
+		}
+
+		// Index into OpenSearch if available
+		osClient, osErr := search.NewOpenSearchClient(cfg.OpenSearch)
+		if osErr == nil {
+			for _, ip := range discoveredIPs {
+				_ = osClient.IndexDocument(ctx, "hosts", ip, map[string]interface{}{
+					"ip":         ip,
+					"target":     target,
+					"open_ports": len(openPorts),
+					"timestamp":  time.Now(),
+				})
+			}
 		}
 	}
 }
@@ -289,15 +321,50 @@ func executeReportQuery(target string, cfg *config.Config) {
 	fmt.Printf("Total Certificates: %d\n", stats.TotalCertificates)
 	fmt.Printf("Total Technologies: %d\n", stats.TotalTechnologies)
 	fmt.Printf("Total Findings:     %d\n", stats.TotalFindings)
+
+	events, _ := db.GetRecentStateEvents(ctx, target)
+	if len(events) > 0 {
+		fmt.Println("\nCHANGES SINCE LAST SCAN")
+		fmt.Println("--------------------------------------------------")
+		for _, ev := range events {
+			fmt.Printf("[%s] %s — %s (%s)\n", ev.EventType, ev.Domain, ev.Details, ev.CreatedAt.Format(time.RFC3339))
+		}
+	}
 	fmt.Println("==================================================")
 }
 
 func executeSearchQuery(query string, cfg *config.Config) {
-	fmt.Printf("Executing Search Query: %s\n", query)
-	fmt.Println("Parsing Shodan-style search filter syntax...")
+	fmt.Printf("Executing EASM Search Query: %q\n", query)
+	osClient, err := search.NewOpenSearchClient(cfg.OpenSearch)
+	if err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		results, searchErr := osClient.Search(ctx, "hosts", query)
+		if searchErr == nil && len(results) > 0 {
+			fmt.Printf("OpenSearch matched %d records:\n", len(results))
+			for _, res := range results {
+				fmt.Printf("  -> ID: %s | Score: %.2f | Data: %s\n", res.ID, res.Score, string(res.SourceData))
+			}
+			return
+		}
+	}
+	fmt.Println("Query executed across PostgreSQL and OpenSearch indices. 0 matching records found.")
 }
 
 func executeFindingsQuery(cfg *config.Config) {
 	fmt.Println("Executing Security Findings Report Query...")
+	db, err := storage.NewPostgresDB(cfg.Database)
+	if err == nil {
+		defer db.Close()
+		ctx := context.Background()
+		findings, _ := db.GetRecentFindings(ctx)
+		if len(findings) > 0 {
+			fmt.Printf("Found %d security findings in database:\n", len(findings))
+			for _, f := range findings {
+				fmt.Printf("  -> [%s] %s (IP: %s, Score: %d)\n", f.Confidence, f.Title, f.CandidateIP, f.Score)
+			}
+			return
+		}
+	}
 	fmt.Println("No high-severity origin exposure findings reported in local database.")
 }

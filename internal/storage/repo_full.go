@@ -142,3 +142,78 @@ func (p *PostgresDB) SaveFinding(ctx context.Context, f scoring.OriginCandidateR
 	}
 	return nil
 }
+
+type StateEventRecord struct {
+	ID        string    `json:"id"`
+	Domain    string    `json:"domain"`
+	EventType string    `json:"event_type"`
+	Details   string    `json:"details"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (p *PostgresDB) SaveStateEvent(ctx context.Context, targetDomain, eventType, details string) error {
+	id := uuid.New().String()
+	now := time.Now()
+
+	_, err := p.DB.ExecContext(ctx, `
+		INSERT INTO state_events (id, target_domain, event_type, details, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`, id, targetDomain, eventType, details, now)
+
+	if err != nil {
+		return fmt.Errorf("failed to save state event: %w", err)
+	}
+	return nil
+}
+
+func (p *PostgresDB) GetRecentStateEvents(ctx context.Context, targetDomain string) ([]StateEventRecord, error) {
+	rows, err := p.DB.QueryContext(ctx, `
+		SELECT id, target_domain, event_type, details, created_at
+		FROM state_events
+		WHERE target_domain = $1
+		ORDER BY created_at DESC
+		LIMIT 20
+	`, targetDomain)
+	if err != nil {
+		return nil, fmt.Errorf("failed querying state events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []StateEventRecord
+	for rows.Next() {
+		var ev StateEventRecord
+		if err := rows.Scan(&ev.ID, &ev.Domain, &ev.EventType, &ev.Details, &ev.CreatedAt); err == nil {
+			events = append(events, ev)
+		}
+	}
+	return events, nil
+}
+
+type FindingRecord struct {
+	Title       string `json:"title"`
+	CandidateIP string `json:"candidate_ip"`
+	Score       int    `json:"score"`
+	Confidence  string `json:"confidence"`
+}
+
+func (p *PostgresDB) GetRecentFindings(ctx context.Context) ([]FindingRecord, error) {
+	rows, err := p.DB.QueryContext(ctx, `
+		SELECT title, candidate_ip, score, confidence
+		FROM findings
+		ORDER BY first_seen DESC
+		LIMIT 20
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed querying findings: %w", err)
+	}
+	defer rows.Close()
+
+	var findings []FindingRecord
+	for rows.Next() {
+		var f FindingRecord
+		if err := rows.Scan(&f.Title, &f.CandidateIP, &f.Score, &f.Confidence); err == nil {
+			findings = append(findings, f)
+		}
+	}
+	return findings, nil
+}

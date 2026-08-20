@@ -204,6 +204,14 @@ func (p *PostgresDB) InitSchema(ctx context.Context) error {
 		first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	);
+
+	CREATE TABLE IF NOT EXISTS state_events (
+		id UUID PRIMARY KEY,
+		target_domain VARCHAR(255) NOT NULL,
+		event_type VARCHAR(100) NOT NULL,
+		details TEXT NOT NULL,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
 	`
 	_, err := p.DB.ExecContext(ctx, schemaSQL)
 	if err != nil {

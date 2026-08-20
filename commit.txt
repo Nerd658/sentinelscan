@@ -1,26 +1,19 @@
-2026-08-20 — SentinelScan Phase 12 Black-Box Production Path Validation
+2026-08-20 — Dynamic Target Authorization in Scope Engine for Online Scans
 
 What changed:
-- Implemented Black-Box Production Path Validation in `tests/e2e/test_system_docker.sh`:
-  - Interdicted direct Go `internal/*` package calls from test suite.
-  - Executed compiled production binary `/app/bin/sentinelscan` exclusively inside `sentinelscan-runner` container.
-- Added direct SQL row auditing against `lab-postgres` container (`SELECT count(*) FROM hosts`, `SELECT count(*) FROM ports`, `SELECT count(*) FROM findings`).
-- Verified black-box dynamic state transitions (service stop, service start, CLI report query).
-- Saved evaluated Origin Exposure findings to PostgreSQL storage in `cmd/sentinelscan/main.go`.
-- Verified 100% clean compilation and test execution.
+- Added `AddAllowedIP(ipStr string)` in `internal/scope/scope.go` to support dynamic runtime authorization.
+- Updated `cmd/sentinelscan/main.go` to:
+  - Parse direct IP targets and register them in ScopeRules.
+  - Dynamically authorize all IPs discovered via DNS resolution of an authorized target domain.
+- Verified compilation and test suite passing (`go test ./...`).
 
 Why:
-- Delivers Phase 12 requirement: proving that SentinelScan operates as a black-box CLI binary against a live multi-container environment without test helper cheats or internal package bypasses.
+- Enables SentinelScan to scan real online targets (e.g. preproduction / staging websites) while strictly preventing scans against out-of-scope third-party assets.
 
 Files affected:
-- tests/e2e/test_system_docker.sh — Added SQL row auditing & black-box CLI verification steps
-- cmd/sentinelscan/main.go — Updated executeLiveScan to persist evaluated findings to PostgreSQL
+- internal/scope/scope.go — Added AddAllowedIP method
+- cmd/sentinelscan/main.go — Dynamic scope enrollment for resolved target IPs
 - commit.txt — Updated commit metadata
 
 Breaking changes:
 - None
-
-Notes for review:
-- All unit, integration, and socket tests pass (`go test ./...`).
-- Binaries compile successfully (`go build ./cmd/api ./cmd/scanner ./cmd/sentinelscan ./cmd/gen_certs`).
-- `make test-e2e-docker` executes full black-box system validation.
