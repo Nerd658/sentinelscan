@@ -246,8 +246,17 @@ func executeLiveScan(target string, cfg *config.Config) {
 		for _, h := range httpObservations {
 			_ = db.SaveHTTPObservation(ctx, h)
 		}
-		for _, t := range tlsObservations {
-			_ = db.SaveCertificate(ctx, t)
+		for _, ip := range discoveredIPs {
+			var tObs *tls.TLSObservation
+			var hObs *http.HTTPObservation
+			if len(tlsObservations) > 0 {
+				tObs = tlsObservations[0]
+			}
+			if len(httpObservations) > 0 {
+				hObs = httpObservations[0]
+			}
+			res := evaluator.Evaluate(target, ip, tObs, hObs, true)
+			_ = db.SaveFinding(ctx, res)
 		}
 	}
 }
