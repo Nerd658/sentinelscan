@@ -13,6 +13,10 @@ test:
 	@echo "Running unit tests..."
 	$(GO) test -v ./...
 
+test-e2e:
+	@echo "Running E2E Lab Test Suite..."
+	$(GO) test -v ./tests/e2e/...
+
 clean:
 	@echo "Cleaning build artifacts..."
 	rm -rf bin/ /tmp/api /tmp/scanner

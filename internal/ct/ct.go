@@ -22,6 +22,7 @@ type CTHostname struct {
 type Client struct {
 	scopeEngine *scope.Engine
 	httpClient  *http.Client
+	BaseURL     string
 }
 
 func NewClient(scopeEngine *scope.Engine, timeout time.Duration) *Client {
@@ -33,6 +34,19 @@ func NewClient(scopeEngine *scope.Engine, timeout time.Duration) *Client {
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
+		BaseURL: "https://crt.sh",
+	}
+}
+
+func (c *Client) SetHTTPClient(httpClient *http.Client) {
+	if httpClient != nil {
+		c.httpClient = httpClient
+	}
+}
+
+func (c *Client) SetBaseURL(url string) {
+	if url != "" {
+		c.BaseURL = url
 	}
 }
 
@@ -56,7 +70,11 @@ func (c *Client) DiscoverHostnames(ctx context.Context, domain string) ([]CTHost
 		}
 	}
 
-	url := fmt.Sprintf("https://crt.sh/?q=%%25.%s&output=json", cleanedDomain)
+	baseURL := c.BaseURL
+	if baseURL == "" {
+		baseURL = "https://crt.sh"
+	}
+	url := fmt.Sprintf("%s/?q=%%25.%s&output=json", baseURL, cleanedDomain)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build crt.sh request: %w", err)

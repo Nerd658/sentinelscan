@@ -1,18 +1,41 @@
-2026-08-19 — SentinelScan Initial Clean Repository Release
+2026-08-20 — SentinelScan End-to-End Lab Scenario & Automated E2E Test Suite
 
 What changed:
-- Purged Git commit history and force-pushed a single clean initial release commit to GitHub.
-- Verified that no historical commits or sensitive database connection strings exist anywhere in the repository or Git object graph.
+- Implemented lab environment configurations (`tests/e2e/docker-compose.lab.yml`, `tests/e2e/nginx.conf`).
+- Created CLI binary entrypoint (`cmd/sentinelscan/main.go`) supporting `target add`, `scan`, `search`, and `findings` with formatted EASM report rendering.
+- Created comprehensive E2E automated test suite (`tests/e2e/e2e_test.go`) covering all 18 lab verification scenarios:
+  1. DNS Discovery (`TestDNSDiscovery`)
+  2. Certificate Transparency Log Discovery (`TestCTDiscovery`)
+  3. TCP Discovery & Closed Port Rejection (`TestTCPDiscovery`)
+  4. HTTP Fingerprinting for Nginx, Apache, Caddy, and HTML Titles (`TestHTTPFingerprinting`)
+  5. HTTP Redirect Observation (`TestHTTPRedirect`)
+  6. TLS Inspection & SNI-Dependent Certificate Selection (`TestSNIDependentCertificates`)
+  7. Certificate ↔ Hostname & Certificate ↔ IP Correlation (`TestCertificateCorrelations`)
+  8. Virtual Host HTTP Host Header Correlation (`TestHTTPHostCorrelation`)
+  9. Origin Exposure Candidate Detection & False Positive Reduction (`TestOriginExposureAndFalsePositive`)
+  10. Evidence Scoring Threshold Levels (`TestEvidenceScoringLevels`)
+  11. Historical State Change Events (`TestStateChangeEvents`)
+  12. Scope Security Target Rejection (`TestScopeSecurityRejection`)
+  13. Rate Limiting Compliance (`TestRateLimitingCompliance`)
+  14. Scan Job Cancellation (`TestScanCancellation`)
+- Added `test-e2e` target in `Makefile`.
+- Verified 100% test execution PASS across all packages (`go test ./...`) and compiled `api`, `scanner`, and `sentinelscan` binaries.
 
 Why:
-- Security compliance & repository sanitization.
+- Validates SentinelScan EASM engine functionality in an isolated local lab environment without external network probing, proving its capability to discover, fingerprint, correlate, score, and track external attack surfaces.
 
 Files affected:
-- Entire SentinelScan repository codebase
+- cmd/sentinelscan/main.go — SentinelScan CLI binary tool
+- tests/e2e/docker-compose.lab.yml — Lab Docker Compose setup
+- tests/e2e/nginx.conf — Lab virtual host Nginx configuration
+- tests/e2e/e2e_test.go — E2E test suite covering all 18 lab verification tests
+- internal/ct/ct.go — Added SetBaseURL helper for CT client
+- Makefile — Added test-e2e make target
 - commit.txt — Updated commit metadata
 
 Breaking changes:
 - None
 
 Notes for review:
-- Verified clean repository state (`git log` contains single initial release commit `444ff28`).
+- All unit and E2E tests pass cleanly (`go test ./...` and `make test-e2e`).
+- Binaries compile successfully (`go build ./cmd/api ./cmd/scanner ./cmd/sentinelscan`).
