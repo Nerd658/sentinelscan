@@ -105,8 +105,8 @@ func TestRealVirtualHostingInspection(t *testing.T) {
 
 	// Host 2: api.jobsira.test
 	obs2, err := fetcher.Fetch(t.Context(), "127.0.0.1", port, "http", "api.jobsira.test")
-	if err != nil || !strings.Contains(obs2.Title, "") {
-		t.Errorf("expected API response, got %v", err)
+	if err != nil || obs2.StatusCode != 200 {
+		t.Errorf("expected 200 OK for API host, got err=%v status=%d", err, obs2.StatusCode)
 	}
 
 	// Host 3: admin.jobsira.test
